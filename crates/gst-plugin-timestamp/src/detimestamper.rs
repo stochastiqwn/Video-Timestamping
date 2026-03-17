@@ -144,13 +144,13 @@ impl BaseTransformImpl for Detimestamper {
         })?;
 
         let data = map.as_slice();
-        let timestamps = sei::find_sei_timestamps(data);
+        let timestamp = sei::find_sei_timestamp(data);
 
         let settings = self.settings.lock().unwrap();
         let strip = settings.strip_sei;
         drop(settings);
 
-        let output_data = if strip && !timestamps.is_empty() {
+        let output_data = if strip && timestamp.is_some() {
             strip_timestamp_sei_nalus(data)
         } else {
             data.to_vec()
@@ -177,7 +177,7 @@ impl BaseTransformImpl for Detimestamper {
         outbuf.set_offset(inbuf.offset());
         outbuf.set_offset_end(inbuf.offset_end());
 
-        if let Some(&ts) = timestamps.first() {
+        if let Some(ts) = timestamp {
             // Attach as ReferenceTimestampMeta using a custom reference caps
             // that identifies our absolute timestamp scheme.
             let reference_caps =

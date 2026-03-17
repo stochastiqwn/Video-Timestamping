@@ -17,51 +17,17 @@ const TIMESTAMP_UUID = new Uint8Array([
 const NAL_TYPE_SEI = 6;
 
 /**
- * Find start codes (00 00 01 or 00 00 00 01) in H.264 byte-stream data.
+ * Check if 16 bytes at the given offset match the TIMESTAMP_UUID.
+ * Avoids creating a slice and comparing arrays.
  * @param {Uint8Array} data
- * @returns {Array<{offset: number, scLen: number}>}
+ * @param {number} offset
+ * @returns {boolean}
  */
-function findStartCodes(data) {
-  const results = [];
-  const n = data.length;
-  for (let i = 0; i < n - 2; i++) {
-    if (data[i] === 0 && data[i + 1] === 0) {
-      if (data[i + 2] === 1) {
-        results.push({ offset: i + 3, scLen: 3 });
-        i += 2;
-      } else if (i + 3 < n && data[i + 2] === 0 && data[i + 3] === 1) {
-        results.push({ offset: i + 4, scLen: 4 });
-        i += 3;
-      }
-    }
-  }
-  return results;
-}
-
-/**
- * Check if two Uint8Arrays are equal.
- */
-function arraysEqual(a, b) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
+function uuidMatchesAt(data, offset) {
+  for (let i = 0; i < 16; i++) {
+    if (data[offset + i] !== TIMESTAMP_UUID[i]) return false;
   }
   return true;
-}
-
-/**
- * Parse a u64 big-endian from 8 bytes.
- * JavaScript doesn't have native u64, but we can use BigInt for full precision
- * and convert to Number for practical use (safe up to 2^53).
- * @param {Uint8Array} bytes - 8 bytes
- * @returns {BigInt}
- */
-function readU64BE(bytes) {
-  let value = BigInt(0);
-  for (let i = 0; i < 8; i++) {
-    value = (value << BigInt(8)) | BigInt(bytes[i]);
-  }
-  return value;
 }
 
 /**
@@ -99,10 +65,14 @@ function parseSeiTimestamp(payload) {
 
     // Check for user_data_unregistered (type 5) with our UUID
     if (payloadType === 5 && payloadSize === 24) {
-      const uuid = payload.slice(offset, offset + 16);
-      if (arraysEqual(uuid, TIMESTAMP_UUID)) {
-        const tsBytes = payload.slice(offset + 16, offset + 24);
-        return readU64BE(tsBytes);
+      if (uuidMatchesAt(payload, offset)) {
+        // Read u64 big-endian via DataView (avoids manual BigInt loop)
+        const view = new DataView(
+          payload.buffer,
+          payload.byteOffset + offset + 16,
+          8
+        );
+        return view.getBigUint64(0, /* littleEndian */ false);
       }
     }
 
@@ -113,15 +83,34 @@ function parseSeiTimestamp(payload) {
 }
 
 /**
+ * Find the next start code (00 00 01 or 00 00 00 01) starting from `from`.
+ * Returns {offset, scLen} or null.
+ * @param {Uint8Array} data
+ * @param {number} from
+ * @returns {{offset: number, scLen: number}|null}
+ */
+function findNextStartCode(data, from) {
+  const n = data.length;
+  for (let i = from; i < n - 2; i++) {
+    if (data[i] === 0 && data[i + 1] === 0) {
+      if (data[i + 2] === 1) {
+        return { offset: i + 3, scLen: 3 };
+      }
+      if (i + 3 < n && data[i + 2] === 0 && data[i + 3] === 1) {
+        return { offset: i + 4, scLen: 4 };
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Extract timestamp from an encoded H.264 frame.
  *
- * RTP depayloaded H.264 may arrive as:
- * - Single NAL unit (starts with NAL header byte, no start code)
- * - STAP-A aggregation packet (NAL type 24)
- * - FU-A fragmentation packet (NAL type 28)
- * - Or byte-stream format with start codes
+ * Iterates NAL units lazily — stops as soon as a timestamp is found or
+ * a VCL NAL (types 1-5) is reached (SEI always precedes VCL).
  *
- * We handle both byte-stream format and single NAL unit format.
+ * Handles byte-stream (Annex B), single NAL unit, and STAP-A formats.
  *
  * @param {Uint8Array} data
  * @returns {BigInt|null}
@@ -135,22 +124,27 @@ function extractTimestamp(data) {
     (data[0] === 0 && data[1] === 0 && data[2] === 0 && data[3] === 1);
 
   if (hasStartCode) {
-    // Byte-stream format: iterate NAL units
-    const startCodes = findStartCodes(data);
-    for (let i = 0; i < startCodes.length; i++) {
-      const naluStart = startCodes[i].offset;
-      const naluEnd =
-        i + 1 < startCodes.length
-          ? startCodes[i + 1].offset - startCodes[i + 1].scLen
-          : data.length;
+    // Byte-stream format: iterate NAL units lazily
+    let sc = findNextStartCode(data, 0);
+    while (sc !== null) {
+      const naluStart = sc.offset;
+      if (naluStart >= data.length) break;
 
-      if (naluStart >= data.length) continue;
       const nalType = data[naluStart] & 0x1f;
+
+      // VCL NAL types 1-5: no more SEI can follow, stop early
+      if (nalType >= 1 && nalType <= 5) return null;
+
+      // Find end of this NAL (next start code or end of data)
+      const nextSc = findNextStartCode(data, naluStart);
+      const naluEnd = nextSc !== null ? nextSc.offset - nextSc.scLen : data.length;
 
       if (nalType === NAL_TYPE_SEI) {
         const ts = parseSeiTimestamp(data.subarray(naluStart + 1, naluEnd));
         if (ts !== null) return ts;
       }
+
+      sc = nextSc;
     }
   } else {
     // Single NAL unit or aggregation packet
@@ -169,6 +163,10 @@ function extractTimestamp(data) {
         if (offset + naluSize > data.length) break;
 
         const subNalType = data[offset] & 0x1f;
+
+        // VCL: stop early
+        if (subNalType >= 1 && subNalType <= 5) return null;
+
         if (subNalType === NAL_TYPE_SEI) {
           const ts = parseSeiTimestamp(
             data.subarray(offset + 1, offset + naluSize)

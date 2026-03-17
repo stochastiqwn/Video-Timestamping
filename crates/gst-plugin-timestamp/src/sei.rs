@@ -184,21 +184,27 @@ impl<'a> Iterator for NaluIterator<'a> {
     }
 }
 
-/// Scan a byte-stream H.264 access unit and extract all our timestamps from SEI NALUs.
-pub fn find_sei_timestamps(data: &[u8]) -> Vec<u64> {
-    let mut timestamps = Vec::new();
+/// Scan a byte-stream H.264 access unit and return the first timestamp found.
+///
+/// Terminates early once a timestamp is found or once a VCL NAL unit (types 1-5)
+/// is reached, since SEI NAL units always precede VCL NAL units in an access unit.
+pub fn find_sei_timestamp(data: &[u8]) -> Option<u64> {
     for (_offset, nalu) in NaluIterator::new(data) {
         if nalu.is_empty() {
             continue;
         }
         let nal_type = nalu[0] & 0x1F;
+        // VCL NAL types 1-5: no more SEI can follow, stop scanning
+        if (1..=5).contains(&nal_type) {
+            return None;
+        }
         if nal_type == NAL_TYPE_SEI {
             if let Some(ts) = parse_sei_timestamp_from_payload(&nalu[1..]) {
-                timestamps.push(ts);
+                return Some(ts);
             }
         }
     }
-    timestamps
+    None
 }
 
 /// Find the byte offset of the first VCL (Video Coding Layer) NAL unit in
@@ -206,9 +212,7 @@ pub fn find_sei_timestamps(data: &[u8]) -> Vec<u64> {
 /// partition A/B/C, IDR slice).
 /// Returns the offset of the start code (00 00 00 01 or 00 00 01) preceding the VCL NAL.
 pub fn find_first_vcl_start_code_offset(data: &[u8]) -> Option<usize> {
-    let mut pos = 0;
-    let iter = NaluIterator::new(data);
-    for (nalu_start, nalu) in iter {
+    for (nalu_start, nalu) in NaluIterator::new(data) {
         if nalu.is_empty() {
             continue;
         }
@@ -221,9 +225,7 @@ pub fn find_first_vcl_start_code_offset(data: &[u8]) -> Option<usize> {
             }
             return Some(sc_start);
         }
-        pos = nalu_start + nalu.len();
     }
-    let _ = pos;
     None
 }
 
@@ -283,8 +285,7 @@ mod tests {
         // IDR slice (NAL type 5)
         au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x80, 0x40]);
 
-        let timestamps = find_sei_timestamps(&au);
-        assert_eq!(timestamps, vec![ts]);
+        assert_eq!(find_sei_timestamp(&au), Some(ts));
     }
 
     #[test]
@@ -301,8 +302,7 @@ mod tests {
         let result = inject_timestamp_sei(&au, ts);
 
         // Should now contain our timestamp
-        let timestamps = find_sei_timestamps(&result);
-        assert_eq!(timestamps, vec![ts]);
+        assert_eq!(find_sei_timestamp(&result), Some(ts));
 
         // The SPS should still be at the beginning
         assert_eq!(&result[..5], &[0x00, 0x00, 0x00, 0x01, 0x67]);

@@ -51,17 +51,16 @@ def on_new_sample_raw_parse(sink) -> Gst.FlowReturn:
     data = bytes(map_info.data)
     buf.unmap(map_info)
 
-    timestamps = sei_parser.find_sei_timestamps(data)
+    ts_ns = sei_parser.find_sei_timestamp(data)
     frame_count += 1
 
-    if timestamps:
-        for ts_ns in timestamps:
-            latency_ms = (time.time_ns() - ts_ns) / 1e6
-            print(
-                f"Frame {frame_count:6d} | "
-                f"Timestamp: {sei_parser.format_timestamp(ts_ns)} | "
-                f"Latency: {latency_ms:.1f} ms"
-            )
+    if ts_ns is not None:
+        latency_ms = (time.time_ns() - ts_ns) / 1e6
+        print(
+            f"Frame {frame_count:6d} | "
+            f"Timestamp: {sei_parser.format_timestamp(ts_ns)} | "
+            f"Latency: {latency_ms:.1f} ms"
+        )
     else:
         pts = buf.pts
         if pts != Gst.CLOCK_TIME_NONE:

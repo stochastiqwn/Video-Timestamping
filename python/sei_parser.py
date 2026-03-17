@@ -39,18 +39,27 @@ def find_start_codes(data: bytes) -> Iterator[tuple[int, int]]:
 
 
 def iter_nalus(data: bytes) -> Iterator[tuple[int, bytes]]:
-    """Iterate over NAL units in byte-stream format.
+    """Iterate over NAL units in byte-stream format (lazy).
 
     Yields (nalu_start_offset, nalu_bytes_without_start_code).
+    Only scans ahead to the next start code on each iteration,
+    so callers that break early avoid scanning the rest of the buffer.
     """
-    starts = list(find_start_codes(data))
-    for idx, (nalu_start, sc_len) in enumerate(starts):
-        if idx + 1 < len(starts):
-            next_sc_start = starts[idx + 1][0] - starts[idx + 1][1]
-            nalu_data = data[nalu_start:next_sc_start]
-        else:
-            nalu_data = data[nalu_start:]
-        yield nalu_start, nalu_data
+    sc_iter = find_start_codes(data)
+    prev = next(sc_iter, None)
+    if prev is None:
+        return
+
+    for nalu_start, sc_len in sc_iter:
+        prev_start, _ = prev
+        # End of previous NAL is at the start of this start code
+        nalu_end = nalu_start - sc_len
+        yield prev_start, data[prev_start:nalu_end]
+        prev = (nalu_start, sc_len)
+
+    # Last NAL unit extends to end of data
+    prev_start, _ = prev
+    yield prev_start, data[prev_start:]
 
 
 def parse_sei_timestamp(sei_payload: bytes) -> int | None:
@@ -99,18 +108,34 @@ def parse_sei_timestamp(sei_payload: bytes) -> int | None:
     return None
 
 
-def find_sei_timestamps(data: bytes) -> list[int]:
-    """Scan H.264 byte-stream data and return all our embedded timestamps."""
-    timestamps = []
+def find_sei_timestamp(data: bytes) -> int | None:
+    """Scan H.264 byte-stream data and return the first embedded timestamp.
+
+    Terminates early once a timestamp is found, or when a VCL NAL unit
+    (types 1-5) is reached, since SEI always precedes VCL in an access unit.
+    """
     for _offset, nalu in iter_nalus(data):
         if len(nalu) == 0:
             continue
         nal_type = nalu[0] & 0x1F
+        # VCL NAL types 1-5: no more SEI can follow, stop scanning
+        if 1 <= nal_type <= 5:
+            return None
         if nal_type == NAL_TYPE_SEI:
             ts = parse_sei_timestamp(nalu[1:])
             if ts is not None:
-                timestamps.append(ts)
-    return timestamps
+                return ts
+    return None
+
+
+def find_sei_timestamps(data: bytes) -> list[int]:
+    """Scan H.264 byte-stream data and return all our embedded timestamps.
+
+    For most use cases, prefer find_sei_timestamp() which returns only the
+    first timestamp and terminates early.
+    """
+    ts = find_sei_timestamp(data)
+    return [ts] if ts is not None else []
 
 
 def timestamp_to_datetime(timestamp_ns: int) -> datetime:
