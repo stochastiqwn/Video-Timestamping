@@ -37,7 +37,33 @@ A GStreamer plugin (Rust) that embeds absolute timestamps into H.264 video strea
 
 ## Quick Start
 
-### 1. Install Dependencies
+### Docker (recommended)
+
+Build and run everything with Docker:
+
+```bash
+# Build the image
+docker build -t video-timestamping .
+
+# Run the full demo (mediamtx + publisher + receiver)
+docker run -it --rm -p 8554:8554 -p 8889:8889 -p 8080:8080 video-timestamping
+
+# Or use docker compose to run services individually
+docker compose up
+```
+
+With compose running, open `http://localhost:8080` in Chrome/Edge to view the WHEP receiver.
+
+Individual services:
+
+```bash
+docker compose up mediamtx publisher webui   # Stream + web UI only
+docker compose run receiver                   # Run RTSP receiver interactively
+```
+
+### Manual Setup
+
+#### 1. Install Dependencies
 
 ```bash
 bash scripts/install-deps.sh
@@ -58,7 +84,7 @@ cargo build --release
 pip install -r python/requirements.txt
 ```
 
-### 2. Start mediamtx
+#### 2. Start mediamtx
 
 Download [mediamtx](https://github.com/bluenviron/mediamtx/releases) and run:
 
@@ -66,14 +92,14 @@ Download [mediamtx](https://github.com/bluenviron/mediamtx/releases) and run:
 ./bin/mediamtx mediamtx.yml
 ```
 
-### 3. Publish a Timestamped Stream
+#### 3. Publish a Timestamped Stream
 
 ```bash
 GST_PLUGIN_PATH=target/release python3 python/publish_rtsp.py \
     --url rtsp://localhost:8554/stream
 ```
 
-### 4. Receive and Extract Timestamps
+#### 4. Receive and Extract Timestamps
 
 **Python (RTSP):**
 

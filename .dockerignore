@@ -1,0 +1,13 @@
+target/
+bin/
+node_modules/
+__pycache__/
+*.pyc
+*.egg-info/
+.env
+*.pem
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml

@@ -1,0 +1,59 @@
+# Docker Compose for Video-Timestamping
+#
+# Services:
+#   mediamtx   - Media server (RTSP + WebRTC WHIP/WHEP)
+#   publisher  - Publishes timestamped H.264 video to mediamtx via RTSP
+#   receiver   - Python RTSP receiver that extracts and prints timestamps
+#   webui      - Node.js static server for the browser WHEP receiver
+#
+# Usage:
+#   docker compose up              # Run all services
+#   docker compose up mediamtx publisher webui   # Just stream + web UI
+#   docker compose run receiver    # Run receiver interactively
+
+services:
+  mediamtx:
+    image: video-timestamping
+    build: .
+    command: mediamtx /app/mediamtx.yml
+    ports:
+      - "8554:8554"     # RTSP
+      - "8889:8889"     # WebRTC WHIP/WHEP
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8889"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+
+  publisher:
+    image: video-timestamping
+    build: .
+    command: >
+      python3 python/publish_rtsp.py
+        --url rtsp://mediamtx:8554/stream
+        --source "videotestsrc is-live=true pattern=ball"
+        --fps 30
+        --width 1280
+        --height 720
+    depends_on:
+      mediamtx:
+        condition: service_healthy
+
+  receiver:
+    image: video-timestamping
+    build: .
+    command: >
+      python3 python/receive_rtsp.py
+        --url rtsp://mediamtx:8554/stream
+    depends_on:
+      mediamtx:
+        condition: service_healthy
+      publisher:
+        condition: service_started
+
+  webui:
+    image: video-timestamping
+    build: .
+    command: node js/server.js --port 8080
+    ports:
+      - "8080:8080"     # Browser WHEP receiver UI
