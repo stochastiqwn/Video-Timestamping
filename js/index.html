@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Timestamp Receiver (WHEP)</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        h1 {
+            margin-bottom: 20px;
+            font-size: 1.4em;
+            color: #64ffda;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        input[type="text"] {
+            background: #16213e;
+            border: 1px solid #0f3460;
+            color: #eee;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-family: monospace;
+            width: 400px;
+        }
+        button {
+            background: #0f3460;
+            color: #64ffda;
+            border: 1px solid #64ffda;
+            padding: 8px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: monospace;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: #1a5276;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .video-container {
+            position: relative;
+            background: #000;
+            border: 2px solid #0f3460;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        video {
+            display: block;
+            max-width: 100%;
+            width: 960px;
+            height: auto;
+        }
+        .timestamp-overlay {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #64ffda;
+            padding: 8px 14px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            pointer-events: none;
+        }
+        .info-panel {
+            background: #16213e;
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            padding: 16px;
+            width: 960px;
+            max-width: 100%;
+        }
+        .info-panel h2 {
+            color: #64ffda;
+            font-size: 1em;
+            margin-bottom: 10px;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+        .stat {
+            background: #1a1a2e;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .stat-label {
+            color: #888;
+            font-size: 0.8em;
+            text-transform: uppercase;
+        }
+        .stat-value {
+            color: #64ffda;
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-top: 4px;
+        }
+        #log {
+            background: #0d1117;
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 20px;
+            width: 960px;
+            max-width: 100%;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .log-entry {
+            color: #aaa;
+        }
+        .log-entry.timestamp {
+            color: #64ffda;
+        }
+        .log-entry.error {
+            color: #ff6b6b;
+        }
+        .method-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.7em;
+            margin-left: 8px;
+        }
+        .method-sei {
+            background: #1b5e20;
+            color: #a5d6a7;
+        }
+        .method-dc {
+            background: #4a148c;
+            color: #ce93d8;
+        }
+    </style>
+</head>
+<body>
+    <h1>Video Timestamp Receiver</h1>
+
+    <div class="controls">
+        <input type="text" id="whepUrl" value="http://localhost:8889/stream/whep"
+               placeholder="WHEP endpoint URL">
+        <button id="connectBtn" onclick="toggleConnection()">Connect</button>
+    </div>
+
+    <div class="video-container">
+        <video id="video" autoplay muted playsinline></video>
+        <div class="timestamp-overlay" id="overlay">
+            <div>Waiting for connection...</div>
+        </div>
+    </div>
+
+    <div class="info-panel">
+        <h2>Stream Statistics</h2>
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">Frames Received</div>
+                <div class="stat-value" id="frameCount">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Latest Timestamp (UTC)</div>
+                <div class="stat-value" id="latestTimestamp">—</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Estimated Latency</div>
+                <div class="stat-value" id="latency">—</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Timestamp Source</div>
+                <div class="stat-value" id="tsSource">—</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="log"></div>
+
+    <script src="whep-client.js"></script>
+    <script>
+        let client = null;
+        let frameCount = 0;
+        let connected = false;
+
+        const videoEl = document.getElementById('video');
+        const overlayEl = document.getElementById('overlay');
+        const logEl = document.getElementById('log');
+
+        function log(message, type = '') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toISOString().substr(11, 12)}] ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+
+            // Keep log size manageable
+            while (logEl.children.length > 200) {
+                logEl.removeChild(logEl.firstChild);
+            }
+        }
+
+        function formatTimestamp(nsString) {
+            // Convert nanosecond string to Date
+            const ns = BigInt(nsString);
+            const ms = Number(ns / BigInt(1000000));
+            const usRemainder = Number((ns % BigInt(1000000)) / BigInt(1000));
+            const dt = new Date(ms);
+            const timeStr = dt.toISOString().replace('T', ' ').replace('Z', '');
+            return timeStr + ' UTC';
+        }
+
+        function onTimestamp(timestampNs, info) {
+            frameCount++;
+
+            const now = BigInt(Date.now()) * BigInt(1000000); // current time in ns
+            const latencyMs = Number((now - timestampNs) / BigInt(1000000));
+
+            const formattedTs = formatTimestamp(timestampNs.toString());
+            const source = info.source || 'unknown';
+
+            // Update overlay
+            overlayEl.innerHTML = `
+                <div>Frame: ${frameCount}</div>
+                <div>Timestamp: ${formattedTs}</div>
+                <div>Latency: ${latencyMs} ms</div>
+                <div>Source: ${source}</div>
+            `;
+
+            // Update stats
+            document.getElementById('frameCount').textContent = frameCount;
+            document.getElementById('latestTimestamp').textContent = formattedTs;
+            document.getElementById('latency').textContent = `${latencyMs} ms`;
+
+            const sourceEl = document.getElementById('tsSource');
+            if (source.includes('encoded-transform')) {
+                sourceEl.innerHTML = 'H.264 SEI <span class="method-badge method-sei">SEI</span>';
+            } else if (source === 'datachannel') {
+                sourceEl.innerHTML = 'DataChannel <span class="method-badge method-dc">DC</span>';
+            } else {
+                sourceEl.textContent = source;
+            }
+
+            // Log every 30th frame to avoid flooding
+            if (frameCount % 30 === 1) {
+                log(`Frame ${frameCount} | ${formattedTs} | Latency: ${latencyMs}ms | via ${source}`, 'timestamp');
+            }
+        }
+
+        async function toggleConnection() {
+            const btn = document.getElementById('connectBtn');
+
+            if (connected) {
+                btn.disabled = true;
+                btn.textContent = 'Disconnecting...';
+                if (client) {
+                    await client.disconnect();
+                    client = null;
+                }
+                connected = false;
+                frameCount = 0;
+                btn.textContent = 'Connect';
+                btn.disabled = false;
+                overlayEl.innerHTML = '<div>Disconnected</div>';
+                log('Disconnected');
+                return;
+            }
+
+            const url = document.getElementById('whepUrl').value.trim();
+            if (!url) {
+                log('Please enter a WHEP URL', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Connecting...';
+            log(`Connecting to ${url}...`);
+
+            try {
+                client = new WHEPClient(url, videoEl, onTimestamp);
+                await client.connect();
+                connected = true;
+                btn.textContent = 'Disconnect';
+                btn.disabled = false;
+                log('Connected successfully');
+
+                if (client.supportsEncodedTransforms) {
+                    log('Using Encoded Transforms for H.264 SEI timestamp extraction');
+                } else {
+                    log('Encoded Transforms not supported — using DataChannel fallback');
+                }
+            } catch (e) {
+                log(`Connection failed: ${e.message}`, 'error');
+                btn.textContent = 'Connect';
+                btn.disabled = false;
+                if (client) {
+                    await client.disconnect();
+                    client = null;
+                }
+            }
+        }
+
+        // Handle Enter key in URL input
+        document.getElementById('whepUrl').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') toggleConnection();
+        });
+
+        log('Ready. Enter WHEP URL and click Connect.');
+        log(`Browser: ${navigator.userAgent.split(' ').pop()}`);
+        log(`Encoded Transforms: ${typeof RTCRtpScriptTransform !== 'undefined' ? 'supported' : 'not supported'}`);
+    </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+[package]
+name = "gst-plugin-timestamp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "GStreamer plugin for embedding absolute timestamps in H.264 video via SEI NAL units"
+repository = "https://github.com/stochastiqwn/Video-Timestamping"
+
+[dependencies]
+gst = { package = "gstreamer", version = "0.23" }
+gst-base = { package = "gstreamer-base", version = "0.23" }
+
+[dev-dependencies]
+gst-check = { package = "gstreamer-check", version = "0.23" }
+
+[lib]
+name = "gstrstimestamp"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[build-dependencies]
+gst-plugin-version-helper = "0.8"

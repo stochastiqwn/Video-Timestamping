@@ -1,0 +1,9 @@
+{
+  "name": "video-timestamp-whep-receiver",
+  "version": "1.0.0",
+  "description": "Browser-based WHEP receiver that extracts absolute timestamps from H.264 SEI NAL units",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  }
+}

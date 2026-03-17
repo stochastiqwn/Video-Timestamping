@@ -1,0 +1,48 @@
+# mediamtx configuration for Video-Timestamping
+#
+# This configuration enables RTSP (for ingest and playback) and
+# WebRTC WHIP/WHEP (for browser-based playback).
+#
+# Download mediamtx: https://github.com/bluenviron/mediamtx/releases
+
+###############################################
+# Global settings
+###############################################
+
+logLevel: info
+logDestinations: [stdout]
+
+###############################################
+# RTSP server
+###############################################
+
+# RTSP is used for both publishing (from GStreamer) and subscribing (from Python receiver)
+rtsp: yes
+rtspAddress: :8554
+protocols: [tcp, udp]
+
+###############################################
+# WebRTC (WHIP/WHEP)
+###############################################
+
+# WHEP is used for browser-based playback
+# WHIP could be used for browser-based publishing
+webrtc: yes
+webrtcAddress: :8889
+
+# ICE servers for NAT traversal (add TURN servers for production)
+# webrtcICEServers2: []
+
+###############################################
+# HLS (optional, for additional compatibility)
+###############################################
+
+hls: no
+
+###############################################
+# Paths (stream routing)
+###############################################
+
+# Allow any stream path to be published and read
+paths:
+  all_others:

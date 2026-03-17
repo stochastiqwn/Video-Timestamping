@@ -1,0 +1,5 @@
+PyGObject>=3.42
+aiortc>=1.6.0
+aiohttp>=3.9
+numpy>=1.24
+opencv-python-headless>=4.8
